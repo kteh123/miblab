@@ -1,6 +1,8 @@
 import os
 import zipfile
 import subprocess
+from .rat import RAT_PROJECTS
+from tqdm import tqdm
 
 # Try importing optional dependencies
 try:
@@ -15,6 +17,7 @@ except ImportError:
 DOI = {
     'MRR': "15285017",    
     'TRISTAN': "15301607", 
+    'RAT': "10675642",     # Added for rat datasets from rat.py
 }
 
 # miblab datasets
@@ -278,3 +281,92 @@ def osf_upload(folder: str, dataset: str, project: str = "un5ct", token: str = N
                 print("Upload complete.")
         except Exception as e:
             raise RuntimeError(f"Failed to upload file: {e}")
+        
+def rat_fetch(dataset: str = None, folder: str = ".", doi: str = None):
+    """
+    Download rat imaging datasets grouped by project using the registry in `rat.py`.
+
+    This function allows you to download:
+    - A **specific project group** (e.g., 'bosentan_highdose', 'relaxivity') containing several ZIP files.
+    - **All available groups** by setting `dataset="all"` or `dataset=None`.
+
+    Downloads are made from Zenodo using the provided or default DOI (`DOI['RAT']`).
+    Files are stored in the specified local folder. If a file already exists, it is skipped.
+
+    Args:
+        dataset (str, optional): The group of ZIP files to download.
+            - If None, defaults to "bosentan_highdose".
+            - If "all", downloads all known groups in `RAT_PROJECTS`.
+        folder (str): Local directory where downloaded files will be saved.
+        doi (str, optional): Zenodo DOI to use. If not provided, uses `DOI['RAT']`.
+
+    Raises:
+        ValueError: If `dataset` is not a valid group name and not "all".
+        NotImplementedError: If required dependencies (e.g. `requests`) are missing.
+        ConnectionError: If there is a network issue or file fetch fails.
+
+    Returns:
+        list[str]: List of full paths to the downloaded ZIP files.
+
+    Example:
+        >>> from data import rat_fetch
+        >>> rat_fetch("bosentan_highdose", "./downloads")      # Download just this group
+        >>> rat_fetch("all", "./all_datasets")                 # Download all groups
+        >>> rat_fetch(folder="./default")                      # Downloads bosentan_highdose by default
+    """
+    if import_error:
+        raise NotImplementedError(
+            'Please install miblab as pip install miblab[data] to use this function.'
+        )
+
+    # Default dataset group to 'bosentan_highdose' if not specified
+    if not dataset:
+        dataset = "bosentan_highdose"
+
+    # Determine which groups to download based on the dataset argument
+    if dataset.lower() == "all":
+        groups_to_download = RAT_PROJECTS.keys()  # Download all groups
+    elif dataset in RAT_PROJECTS:
+        groups_to_download = [dataset]  # Download a specific group
+    else:
+        # Raise error for invalid group name
+        raise ValueError(
+            f"'{dataset}' is not a valid project group in RAT_PROJECTS. "
+            f"Available groups: {', '.join(RAT_PROJECTS)}"
+        )
+
+    # Use the provided DOI or fall back to the default RAT DOI
+    doi = doi or DOI['RAT']
+
+    # Ensure the destination folder exists
+    os.makedirs(folder, exist_ok=True)
+    paths = []  # List to store local file paths of downloaded files
+
+    # Loop through each selected group
+    for group in groups_to_download:
+        file_list = RAT_PROJECTS[group]
+
+        # Initialize progress bar for each group
+        for fname in tqdm(file_list, desc=f"Downloading group '{group}'"):
+            url = f"https://zenodo.org/records/{doi}/files/{fname}"
+            out_path = os.path.join(folder, fname)
+
+            # Skip file if already downloaded
+            if os.path.exists(out_path):
+                paths.append(out_path)
+                continue
+
+            # Attempt to download the file
+            try:
+                response = requests.get(url)
+                response.raise_for_status()
+            except Exception as e:
+                raise ConnectionError(f"Failed to fetch {fname} from Zenodo: {e}")
+
+            # Save the file to disk
+            with open(out_path, 'wb') as f:
+                f.write(response.content)
+
+            paths.append(out_path)
+
+    return paths
